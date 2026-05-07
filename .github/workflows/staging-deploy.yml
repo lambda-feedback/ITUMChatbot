@@ -1,0 +1,74 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13"]
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+      GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+      GOOGLE_AI_MODEL: ${{ vars.GOOGLE_AI_MODEL }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        id: python-setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Create Venv
+        run: python -m venv .venv
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        if: always()
+        run: |
+          source .venv/bin/activate
+          export PYTHONPATH=$PYTHONPATH:.
+          pytest --junit-xml=./reports/pytest.xml --tb=auto -v
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: ./reports/pytest.xml
+          if-no-files-found: warn
+
+  deploy:
+    name: Deploy to Lambda Feedback
+    needs: test
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    uses: lambda-feedback/chat-function-workflows/.github/workflows/deploy.yml@main
+    with:
+      template-repository-name: "lambda-feedback/chat-function-boilerplate"
+      environment: "staging"
+      deployed-environment-variables: '[\"OPENAI_API_KEY\",\"OPENAI_MODEL\",\"GOOGLE_AI_API_KEY\",\"GOOGLE_AI_MODEL\"]'
+    secrets:
+      aws-key-id: ${{ secrets.LAMBDA_CONTAINER_PIPELINE_AWS_ID }}
+      aws-secret-key: ${{ secrets.LAMBDA_CONTAINER_PIPELINE_AWS_SECRET }}
+      function-admin-api-key: ${{ secrets.FUNCTION_ADMIN_API_KEY }}
